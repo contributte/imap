@@ -1,5 +1,14 @@
-# Folders
+# IDE
+/.idea
+
+# Composer
 /vendor
-# Files
 /composer.lock
-/tests/*.log
+
+# Tests
+/tests/tmp
+/coverage.*
+/tests/**/*.log
+/tests/**/*.html
+/tests/**/*.expected
+/tests/**/*.actual
