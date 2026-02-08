@@ -1,196 +1,170 @@
-<?php
+<?php declare(strict_types = 1);
 
 namespace Minetro\Imap;
 
-use Nette\InvalidArgumentException;
+use InvalidArgumentException;
 use stdClass;
 
 /**
  * Imap Message
- *
- * @author Milan Felix Sulc <sulcmil@gmail.com>
  */
 class ImapMessage
 {
 
-    // Message flags
-    const FLAG_SEEN = '\\Seen';
-    const FLAG_ANSWERED = '\\Answered';
-    const FLAG_FLAGGED = '\\Flagged';
-    const FLAG_DELETED = '\\Deleted';
-    const FLAG_DRAFT = '\\Draft';
+	// Message flags
+	public const FLAG_SEEN = '\\Seen';
+	public const FLAG_ANSWERED = '\\Answered';
+	public const FLAG_FLAGGED = '\\Flagged';
+	public const FLAG_DELETED = '\\Deleted';
+	public const FLAG_DRAFT = '\\Draft';
 
-    /** @var int */
-    private $number;
+	private int $number;
 
-    /** @var stdClass */
-    private $headers;
+	private stdClass $headers;
 
-    /** @var stdClass */
-    private $structure;
+	private stdClass $structure;
 
-    /** @var array */
-    private $body = [];
+	/** @var array<string|false> */
+	private array $body = [];
 
-    /**
-     * @param int $number
-     * @param stdClass $headers
-     * @param stdClass $structure
-     * @param array $body
-     */
-    function __construct($number, $headers, $structure, array $body)
-    {
-        $this->number = $number;
+	/**
+	 * @param array<string|false> $body
+	 */
+	public function __construct(int $number, stdClass $headers, stdClass $structure, array $body)
+	{
+		$this->number = $number;
+		$this->headers = $this->utf8($headers);
+		$this->structure = $structure;
+		$this->body = $body;
+	}
 
-        // Convert all headers to UTF-8
-        $this->headers = $this->utf8($headers);
+	public function getNumber(): int
+	{
+		return $this->number;
+	}
 
-        $this->structure = $structure;
-        $this->body = $body;
-    }
+	public function getHeaders(): stdClass
+	{
+		return $this->headers;
+	}
 
-    /**
-     * GETTERS *****************************************************************
-     * *************************************************************************
-     */
+	public function getStructure(): stdClass
+	{
+		return $this->structure;
+	}
 
-    /**
-     * @return int
-     */
-    public function getNumber()
-    {
-        return $this->number;
-    }
+	/**
+	 * @return array<string|false>
+	 */
+	public function getBody(): array
+	{
+		return $this->body;
+	}
 
-    /**
-     * @return stdClass
-     */
-    public function getHeaders()
-    {
-        return $this->headers;
-    }
+	/**
+	 * @throws InvalidArgumentException
+	 */
+	public function getBodySection(int $section): string|false
+	{
+		if ($section > count($this->body) || !isset($this->body[$section])) {
+			throw new InvalidArgumentException('Section #' . $section . ' not found.');
+		}
 
-    /**
-     * @return stdClass
-     */
-    public function getStructure()
-    {
-        return $this->structure;
-    }
+		return $this->body[$section];
+	}
 
-    /**
-     * @return array
-     */
-    public function getBody()
-    {
-        return $this->body;
-    }
+	/**
+	 * Returns text of the e-mail converted to utf-8.
+	 */
+	public function getBodySectionText(int $section, ?int $encoding = null): string
+	{
+		$text = (string) $this->getBodySection($section);
+		$encoding ??= (int) (isset($this->structure->parts[$section]) ? $this->structure->parts[$section]->encoding : $this->structure->encoding);
 
-    /**
-     * @param int $section
-     * @return mixed
-     * @throws InvalidArgumentException
-     */
-    public function getBodySection($section)
-    {
-        if ($section > count($this->body) || !isset($this->body[$section])) {
-            throw new InvalidArgumentException('Section #' . $section . ' not found.');
-        }
+		$etext = match ($encoding) {
+			0 => $text, // 7BIT
+			1 => quoted_printable_decode((string) imap_8bit($text)), // 8BIT
+			2 => (string) imap_binary($text), // BINARY
+			3 => (string) imap_base64($text), // BASE64
+			4 => quoted_printable_decode($text), // QUOTED-PRINTABLE
+			default => $text, // OTHER / UNKNOWN
+		};
 
-        return $this->body[$section];
-    }
+		$charset = $this->getBodyCharset();
 
-    /**
-     * Returns text of the e-mail converted to utf-8.
-     *
-     * @param int $section
-     * @param int $encoding [optional]
-     * @return string
-     */
-    public function getBodySectionText($section, $encoding = NULL)
-    {
-        $text = $this->getBodySection($section);
-        $encoding = $encoding ? $encoding : (isset($this->structure->parts[$section]) ? $this->structure->parts[$section]->encoding : $this->structure->encoding);
+		if ($charset === null) {
+			$detected = mb_detect_encoding($etext, mb_detect_order(), true);
+			$charset = $detected !== false ? $detected : null;
+		}
 
-        switch ($encoding) {
-            # 7BIT
-            case 0:
-                $etext = $text;
-                break;
-            # 8BIT
-            case 1:
-                $etext = quoted_printable_decode(imap_8bit($text));
-                break;
-            # BINARY
-            case 2:
-                $etext = imap_binary($text);
-                break;
-            # BASE64
-            case 3:
-                $etext = imap_base64($text);
-                break;
-            # QUOTED-PRINTABLE
-            case 4:
-                $etext = quoted_printable_decode($text);
-                break;
-            # OTHER
-            case 5:
-                $etext = $text;
-                break;
-            # UNKNOWN
-            default:
-                $etext = $text;
-        }
+		if ($charset === null) {
+			return $etext;
+		}
 
-        $charset = $this->getBodyCharset($section);
-        $charset = $charset ?: mb_detect_encoding($etext, mb_detect_order(), TRUE);
-        if ($charset === FALSE) {
-            return $etext;
-        } else {
-            return iconv($charset, "UTF-8//TRANSLIT", $etext);
-        }
-    }
+		$result = iconv($charset, 'UTF-8//TRANSLIT', $etext);
 
-    /**
-     * Returns charset defined in e-mail headers.
-     *
-     * @return string|NULL
-     */
-    public function getBodyCharset()
-    {
-        foreach ($this->structure->parameters as $pair) {
-            if (isset($pair->attribute) && $pair->attribute == 'charset') {
-                return $pair->value;
-            }
-        }
-        return NULL;
-    }
+		return $result !== false ? $result : $etext;
+	}
 
-    /**
-     * @return int
-     */
-    public function countBodies()
-    {
-        return count($this->body);
-    }
+	/**
+	 * Returns charset defined in e-mail headers.
+	 */
+	public function getBodyCharset(): ?string
+	{
+		foreach ($this->structure->parameters as $pair) {
+			if (isset($pair->attribute) && $pair->attribute === 'charset') {
+				return $pair->value; // @phpstan-ignore property.notFound
+			}
+		}
 
+		return null;
+	}
 
-    /**
-     * HELPERS *****************************************************************
-     * *************************************************************************
-     */
+	public function countBodies(): int
+	{
+		return count($this->body);
+	}
 
-    /**
-     * @param mixed $data
-     * @return stdClass
-     */
-    private function utf8($data)
-    {
-        $array = json_decode(json_encode($data), TRUE);
-        array_walk_recursive($array, function ($v, $k) {
-            return is_array($v) ? $v : imap_utf8($v);
-        });
+	private function utf8(stdClass $data): stdClass
+	{
+		$json = json_encode($data);
 
-        return json_decode(json_encode($array));
-    }
+		if ($json === false) {
+			return $data;
+		}
+
+		/** @var array<mixed> $array */
+		$array = json_decode($json, true);
+		$array = $this->utf8Recursive($array);
+
+		$result = json_decode((string) json_encode($array));
+
+		if ($result instanceof stdClass) {
+			return $result;
+		}
+
+		return $data;
+	}
+
+	/**
+	 * @param array<mixed> $array
+	 * @return array<mixed>
+	 */
+	private function utf8Recursive(array $array): array
+	{
+		$result = [];
+
+		foreach ($array as $key => $value) {
+			if (is_array($value)) {
+				$result[$key] = $this->utf8Recursive($value);
+			} elseif (is_string($value)) {
+				$result[$key] = imap_utf8($value);
+			} else {
+				$result[$key] = $value;
+			}
+		}
+
+		return $result;
+	}
+
 }
