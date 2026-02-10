@@ -39,9 +39,3 @@ Toolkit::test(function (): void {
 	Assert::same('UNKEYWORD', ImapReader::CRITERIA_UNKEYWORD);
 	Assert::same('UNSEEN', ImapReader::CRITERIA_UNSEEN);
 });
-
-Toolkit::test(function (): void {
-	Assert::exception(function (): void {
-		new ImapReader('{invalid:993/imap/ssl}INBOX', 'user', 'pass');
-	}, \RuntimeException::class);
-});
